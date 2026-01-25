@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="LTQ" width="400">
+  <img src="https://raw.githubusercontent.com/tclesius/ltq/refs/heads/main/assets/logo.png" alt="LTQ" width="400">
 </p>
 
 <p align="center">
@@ -18,11 +18,9 @@ uv add ltq
 
 ```python
 import asyncio
-import redis.asyncio as redis
 import ltq
 
-client = redis.from_url("redis://localhost:6379")
-worker = ltq.Worker(client=client)
+worker = ltq.Worker(url="redis://localhost:6379")
 
 @worker.task()
 async def send_email(to: str, subject: str, body: str) -> None:
@@ -71,7 +69,7 @@ Add middleware to handle cross-cutting concerns:
 from ltq.middleware import Retry, RateLimit, Timeout
 
 worker = ltq.Worker(
-    client=client,
+    url="redis://localhost:6379",
     middlewares=[
         Retry(max_retries=3, min_delay=1.0),
         RateLimit(requests_per_second=10),
