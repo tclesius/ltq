@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, Generic, ParamSpec
+from functools import update_wrapper
+from typing import Awaitable, Callable, Generic, ParamSpec, TypeVar
 
 from .message import Message
 from .q import Queue
 
 P = ParamSpec("P")
+R = TypeVar("R")
 
 
-class Task(Generic[P]):
+class Task(Generic[P, R]):
     def __init__(
         self,
         name: str,
-        fn: Callable[P, Awaitable[Any]],
+        fn: Callable[P, Awaitable[R]],
         queue: Queue,
         ttl: int | None = None,
     ) -> None:
@@ -36,3 +38,6 @@ class Task(Generic[P]):
     async def send_bulk(self, messages: list[Message]) -> list[str]:
         await self.queue.put(messages, ttl=self.ttl)
         return [message.id for message in messages]
+
+    async def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        return await self.fn(*args, **kwargs)

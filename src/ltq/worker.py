@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, ParamSpec
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, ParamSpec, TypeVar
 
 import redis.asyncio as redis
 
@@ -21,6 +21,7 @@ logger = get_logger()
 
 
 P = ParamSpec("P")
+R = TypeVar("R")
 
 
 class Worker:
@@ -41,8 +42,8 @@ class Worker:
         self,
         queue_name: str | None = None,
         ttl: int | None = None,
-    ) -> Callable[[Callable[P, Awaitable[Any]]], Task[P]]:
-        def decorator(fn: Callable[P, Awaitable[Any]]) -> Task[P]:
+    ) -> Callable[[Callable[P, Awaitable[R]]], Task[P, R]]:
+        def decorator(fn: Callable[P, Awaitable[R]]) -> Task[P, R]:
             filename = Path(fn.__code__.co_filename).stem
             task_name = f"{filename}:{fn.__qualname__}"
             queue = Queue(self.client, queue_name or task_name)
@@ -50,7 +51,7 @@ class Worker:
                 name=task_name,
                 fn=fn,
                 queue=queue,
-                ttl=ttl, 
+                ttl=ttl,
             )
             self.tasks.append(task)
             return task
@@ -89,5 +90,8 @@ class Worker:
             await task.queue.ack(messages)
 
     async def run(self) -> None:
-        workers = (self.worker(task) for task in self.tasks)
-        await asyncio.gather(*workers)
+        try:
+            workers = (self.worker(task) for task in self.tasks)
+            await asyncio.gather(*workers)
+        finally:
+            await self.client.aclose()

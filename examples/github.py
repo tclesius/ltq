@@ -3,19 +3,16 @@ import json
 import time
 
 import httpx
-import redis.asyncio as redis
 
 import ltq
 from ltq.logger import get_logger
 from ltq.middleware import Retry
 
-REDIS_URL = "redis://localhost:6379"
 OUTPUT_FILE = "github_repos.json"
 
 logger = get_logger()
-client = redis.from_url(REDIS_URL)
 worker = ltq.Worker(
-    client=client,
+    "redis://localhost:6379",
     middlewares=[
         Retry(max_retries=3, min_delay=0.5),
     ],
@@ -73,8 +70,6 @@ async def main() -> None:
     await fetch.send_bulk(repos)
 
     logger.info(f"Enqueued {len(repos)} fetch tasks\n")
-
-    await client.aclose()
 
 
 if __name__ == "__main__":
