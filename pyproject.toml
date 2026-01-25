@@ -1,0 +1,18 @@
+[project]
+name = "ltq"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [{ name = "Tom Clesius", email = "tomclesius@gmail.com" }]
+requires-python = ">=3.13"
+dependencies = ["redis>=7.1.0"]
+
+[project.optional-dependencies]
+sentry = ["sentry-sdk>=2.0.0"]
+
+[project.scripts]
+ltq = "ltq.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
