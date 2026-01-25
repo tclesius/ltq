@@ -5,6 +5,8 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, ParamSpec
 
+import redis.asyncio as redis
+
 from .errors import RetryMessage
 from .task import Task
 from .message import Message
@@ -24,12 +26,12 @@ P = ParamSpec("P")
 class Worker:
     def __init__(
         self,
-        client: AsyncRedis,
+        url: str = "redis://localhost:6379",
         middlewares: list[Middleware] | None = None,
         concurrency: int = 250,
         poll_sleep: float = 0.1,
     ) -> None:
-        self.client: AsyncRedis = client
+        self.client: AsyncRedis = redis.from_url(url)
         self.tasks: list[Task] = []
         self.middlewares: list[Middleware] = middlewares or []
         self.concurrency: int = concurrency
