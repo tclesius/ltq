@@ -9,6 +9,7 @@ dependencies = ["redis>=7.1.0"]
 
 [project.optional-dependencies]
 sentry = ["sentry-sdk>=2.0.0"]
+scheduler = ["croniter>=6.0.0"]
 
 [project.scripts]
 ltq = "ltq.cli:main"
