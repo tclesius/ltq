@@ -7,6 +7,7 @@ from pathlib import Path
 import argparse
 
 from .logger import setup_logging, get_logger
+from .app import App
 from .worker import Worker
 
 logger = get_logger()
@@ -46,7 +47,12 @@ def main():
         epilog="Example:\n  ltq example:worker --concurrency 100",
     )
 
-    parser.add_argument("worker", help="Worker import string (module:attribute)")
+    parser.add_argument(
+        "worker", nargs="?", help="Worker import string (module:attribute)"
+    )
+    parser.add_argument(
+        "--app", dest="app", help="App import string (module:attribute)"
+    )
     parser.add_argument("--concurrency", type=int, help="Override worker concurrency")
     parser.add_argument("--poll-sleep", type=float, help="Override worker poll sleep")
     parser.add_argument(
@@ -58,27 +64,47 @@ def main():
     )
     args = parser.parse_args()
 
+    if not args.worker and not args.app:
+        parser.error("either worker or --app is required")
+    if args.worker and args.app:
+        parser.error("cannot specify both worker and --app")
+
     # Setup colored logging for CLI
     setup_logging(level=args.log_level)
-
-    worker: Worker = import_from_string(args.worker)
-
-    # Apply overrides
-    if args.concurrency:
-        worker.concurrency = args.concurrency
-    if args.poll_sleep:
-        worker.poll_sleep = args.poll_sleep
     if args.log_level:
         logger.setLevel(args.log_level)
 
-    # Print startup info
-    logger.info("Starting ltq worker")
-    logger.info("Worker: %s", args.worker)
+    if args.app:
+        app: App = import_from_string(args.app)
 
-    try:
-        asyncio.run(worker.run())
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        for w in app.workers:
+            if args.concurrency:
+                w.concurrency = args.concurrency
+            if args.poll_sleep:
+                w.poll_sleep = args.poll_sleep
+
+        logger.info("Starting ltq app")
+        logger.info("App: %s (%d workers)", args.app, len(app.workers))
+
+        try:
+            asyncio.run(app.run())
+        except KeyboardInterrupt:
+            logger.info("Shutting down...")
+    else:
+        worker: Worker = import_from_string(args.worker)
+
+        if args.concurrency:
+            worker.concurrency = args.concurrency
+        if args.poll_sleep:
+            worker.poll_sleep = args.poll_sleep
+
+        logger.info("Starting ltq worker")
+        logger.info("Worker: %s", args.worker)
+
+        try:
+            asyncio.run(worker.run())
+        except KeyboardInterrupt:
+            logger.info("Shutting down...")
 
 
 if __name__ == "__main__":
