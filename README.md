@@ -31,12 +31,12 @@ async def main():
     # Enqueue a task
     await send_email.send("user@example.com", "Hello", "World")
 
-    # Or enqueue in bulk
+    # Or dispatch in bulk
     messages = [
         send_email.message("a@example.com", "Hi", "A"),
         send_email.message("b@example.com", "Hi", "B"),
     ]
-    await send_email.send_bulk(messages)
+    await ltq.dispatch(messages)
 
 asyncio.run(main())
 ```
@@ -54,11 +54,27 @@ async def send_newsletter(...): ...
 ## Running Workers
 
 ```bash
-# Run a worker
+# Run a single worker
 ltq myapp:worker
 
 # With options
 ltq myapp:worker --concurrency 100 --log-level DEBUG
+```
+
+## Running an App
+
+Register multiple workers into an `App` to run them together:
+
+```python
+import ltq
+
+app = ltq.App()
+app.register_worker(emails_worker)
+app.register_worker(notifications_worker)
+```
+
+```bash
+ltq --app myapp:app
 ```
 
 ## Middleware
