@@ -22,7 +22,7 @@ build-backend = "uv_build"
 current_version = "0.1.2"
 commit = true
 tag = true
-message = "bump version"
+message = "v{new_version}"
 
 [[tool.bumpversion.files]]
 filename = "pyproject.toml"
