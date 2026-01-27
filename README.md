@@ -77,6 +77,18 @@ app.register_worker(notifications_worker)
 ltq --app myapp:app
 ```
 
+## Scheduler
+
+Run tasks on a cron schedule (requires `ltq[scheduler]`):
+
+```python
+import ltq
+
+scheduler = ltq.Scheduler()
+scheduler.cron("*/5 * * * *", send_email.message("admin@example.com", "Report", "..."))
+scheduler.run()
+```
+
 ## Middleware
 
 Add middleware to handle cross-cutting concerns:
