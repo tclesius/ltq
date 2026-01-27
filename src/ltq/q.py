@@ -14,12 +14,12 @@ class Queue:
         local items = {}
         for i = 1, ARGV[1] do
             local item = redis.call("RPOP", KEYS[1])
-            if item then
-                table.insert(items, item)
-            end
+            if not item then break end
+            table.insert(items, item)
         end
-        if #items > 0 then
-            redis.call("SADD", KEYS[2], unpack(items))
+        for i = 1, #items, 5000 do
+            local chunk = {unpack(items, i, math.min(i + 4999, #items))}
+            redis.call("SADD", KEYS[2], unpack(chunk))
         end
         return items
     """

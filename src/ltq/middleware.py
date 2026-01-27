@@ -95,13 +95,13 @@ class Sentry(Middleware):
 
     async def handle(self, message: Message, next_handler: Handler) -> Any:
         with self.sentry.push_scope() as scope:
-            scope.set_tag("task", message.task)
+            scope.set_tag("task", message.task_name)
             scope.set_tag("message_id", message.id)
             scope.set_context(
                 "message",
                 {
                     "id": message.id,
-                    "task": message.task,
+                    "task": message.task_name,
                     "args": message.args,
                     "kwargs": message.kwargs,
                     "ctx": message.ctx,
