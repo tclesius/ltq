@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-BUMP_TYPE="${1:-patch}"
+BUMP_TYPE="${1:-${BUMP_TYPE:-patch}}"
 
 uvx --from bump-my-version bump-my-version bump "$BUMP_TYPE" --commit --tag
 git push origin main --tags
