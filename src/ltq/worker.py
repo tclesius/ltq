@@ -38,6 +38,7 @@ class Worker:
         self.concurrency: int = concurrency
         self.poll_sleep: float = poll_sleep
 
+
     def task(
         self,
         queue_name: str | None = None,
@@ -58,7 +59,7 @@ class Worker:
 
         return decorator
 
-    async def worker(self, task: Task):
+    async def processor(self, task: Task):
         async def base(message: Message) -> Any:
             return await task.fn(*message.args, **message.kwargs)
 
@@ -66,15 +67,11 @@ class Worker:
         for middleware in reversed(self.middlewares):
             handler = partial(middleware.handle, next_handler=handler)
 
-        while True:
-            messages = await task.queue.get(self.concurrency)
-            if not messages:
-                await asyncio.sleep(self.poll_sleep)
-                continue
+        sem = asyncio.Semaphore(self.concurrency)
+        pending: dict[asyncio.Task, Message] = {}
 
-            logger.debug(f"Processing {len(messages)} messages for {task.name}")
-
-            async def process(msg: Message) -> None:
+        async def process(msg: Message) -> None:
+            async with sem:
                 try:
                     await handler(msg)
                 except RetryMessage as e:
@@ -86,12 +83,26 @@ class Worker:
                         exc_info=True,
                     )
 
-            await asyncio.gather(*(process(m) for m in messages))
-            await task.queue.ack(messages)
+        while True:
+            messages = await task.queue.get(self.concurrency)
+            if not messages:
+                await asyncio.sleep(self.poll_sleep)
+                continue
+
+            logger.debug(f"Processing {len(messages)} messages for {task.name}")
+
+            for msg in messages:
+                t = asyncio.create_task(process(msg))
+                pending[t] = msg
+
+            done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            await task.queue.ack([pending.pop(t) for t in done])
 
     async def run(self) -> None:
         try:
-            workers = (self.worker(task) for task in self.tasks)
-            await asyncio.gather(*workers)
+            processors = (self.processor(task) for task in self.tasks)
+            await asyncio.gather(*processors)
+        except asyncio.CancelledError:
+            logger.info("Worker shutting down...")
         finally:
             await self.client.aclose()
