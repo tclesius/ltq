@@ -4,20 +4,16 @@ import asyncio
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .message import Message
-
-try:
-    from croniter import croniter  # type: ignore[import-not-found]
-except ModuleNotFoundError as exc:
-    raise ModuleNotFoundError(
-        "Scheduler requires optional dependency 'croniter'. "
-        "Install with 'ltq[scheduler]'."
-    ) from exc
-
 from .utils import dispatch
 from .logger import get_logger
+
+try:
+    from croniter import croniter
+except ImportError:
+    croniter = None
 
 if TYPE_CHECKING:
     from .task import Task
@@ -28,11 +24,11 @@ class ScheduledJob:
     task: Task
     msg: Message
     expr: str
-    _cron: croniter = field(init=False, repr=False)
+    _cron: Any = field(init=False, repr=False)  # croniter instance
     next_run: datetime = field(init=False)
 
     def __post_init__(self):
-        self._cron = croniter(self.expr, datetime.now())
+        self._cron = croniter(self.expr, datetime.now())  # type: ignore[misc]
         self.advance()
 
     def advance(self) -> None:
@@ -47,6 +43,11 @@ class Scheduler:
         self._running = False
 
     def cron(self, expr: str, msg: Message) -> None:
+        if croniter is None:
+            raise ModuleNotFoundError(
+                "Scheduler requires optional dependency 'croniter'. "
+                "Install with 'ltq[scheduler]'."
+            )
         if msg.task is None:
             raise ValueError("Message must have a task assigned to use with scheduler")
         self.jobs.append(ScheduledJob(msg.task, msg, expr))
