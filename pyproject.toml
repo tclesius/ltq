@@ -1,6 +1,6 @@
 [project]
 name = "ltq"
-version = "0.2.0"
+version = "0.3.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [{ name = "Tom Clesius", email = "tomclesius@gmail.com" }]
@@ -19,7 +19,7 @@ requires = ["uv_build>=0.9.26,<0.10.0"]
 build-backend = "uv_build"
 
 [tool.bumpversion]
-current_version = "0.2.0"
+current_version = "0.3.0"
 commit = true
 tag = true
 message = "v{new_version}"
