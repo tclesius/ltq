@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, ParamSpec, TypeVar
 
 import redis.asyncio as redis
@@ -38,15 +37,13 @@ class Worker:
         self.concurrency: int = concurrency
         self.poll_sleep: float = poll_sleep
 
-
     def task(
         self,
         queue_name: str | None = None,
         ttl: int | None = None,
     ) -> Callable[[Callable[P, Awaitable[R]]], Task[P, R]]:
         def decorator(fn: Callable[P, Awaitable[R]]) -> Task[P, R]:
-            filename = Path(fn.__code__.co_filename).stem
-            task_name = f"{filename}:{fn.__qualname__}"
+            task_name = f"{fn.__module__}:{fn.__qualname__}"
             queue = Queue(self.client, queue_name or task_name)
             task = Task(
                 name=task_name,
