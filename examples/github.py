@@ -39,7 +39,7 @@ async def fetch(owner: str, repo: str) -> None:
     url = f"https://api.github.com/repos/{owner}/{repo}"
     response = await asyncio.to_thread(
         urlopen, url, timeout=10.0
-    )  # dont block the event loop
+    )  # don't block the event loop
     data = json.loads(response.read())
 
     await asyncio.to_thread(parse, data, owner, repo)
