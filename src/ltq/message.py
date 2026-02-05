@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
-if TYPE_CHECKING:
-    from .task import Task
+def _default_ctx() -> dict[str, Any]:
+    return {"created_at": time.time()}
 
 
 @dataclass
@@ -14,9 +15,8 @@ class Message:
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
     task_name: str
-    task: Task | None = None  # only set when Message created with Task.message
-    ctx: dict[str, Any] = field(default_factory=dict)
-    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    ctx: dict[str, Any] = field(default_factory=_default_ctx)
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def to_json(self) -> str:
         return json.dumps(

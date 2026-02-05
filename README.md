@@ -14,13 +14,22 @@ pip install ltq
 uv add ltq
 ```
 
+## Broker Backends
+
+LTQ supports multiple broker backends:
+
+- **Redis** (default): `broker_url="redis://localhost:6379"`
+- **Memory**: `broker_url="memory://"` (useful for testing)
+
+All workers and schedulers accept a `broker_url` parameter.
+
 ## Quick Start
 
 ```python
 import asyncio
 import ltq
 
-worker = ltq.Worker(url="redis://localhost:6379")
+worker = ltq.Worker("emails", broker_url="redis://localhost:6379")
 
 @worker.task()
 async def send_email(to: str, subject: str, body: str) -> None:
@@ -31,34 +40,23 @@ async def main():
     # Enqueue a task
     await send_email.send("user@example.com", "Hello", "World")
 
-    # Or dispatch in bulk
-    messages = [
-        send_email.message("a@example.com", "Hi", "A"),
-        send_email.message("b@example.com", "Hi", "B"),
-    ]
-    await ltq.dispatch(messages)
+    # Or enqueue multiple tasks
+    for email in ["a@example.com", "b@example.com"]:
+        await send_email.send(email, "Hi", "Message")
 
 asyncio.run(main())
 ```
 
-Each task gets its own queue by default. To share a queue between tasks, pass `queue_name`:
-
-```python
-@worker.task(queue_name="emails")
-async def send_email(...): ...
-
-@worker.task(queue_name="emails")
-async def send_newsletter(...): ...
-```
+Each worker has a namespace (e.g., `"emails"`), and tasks are automatically namespaced as `{namespace}:{function_name}`.
 
 ## Running Workers
 
 ```bash
 # Run a single worker
-ltq myapp:worker
+ltq run myapp:worker
 
 # With options
-ltq myapp:worker --concurrency 100 --log-level DEBUG
+ltq run myapp:worker --concurrency 100 --log-level DEBUG
 ```
 
 ## Running an App
@@ -74,8 +72,59 @@ app.register_worker(notifications_worker)
 ```
 
 ```bash
-ltq --app myapp:app
+ltq run --app myapp:app
 ```
+
+### App Middleware
+
+Apply middleware globally to all workers in an app:
+
+```python
+from ltq.middleware import Sentry
+
+app = ltq.App(middlewares=[Sentry(dsn="https://...")])
+
+# Or register after creation
+app.register_middleware(Sentry(dsn="https://..."))
+app.register_middleware(MyMiddleware(), pos=0)
+
+# When workers are registered, app middlewares are prepended to each worker's stack
+app.register_worker(emails_worker)
+```
+
+### Threading Model
+
+By default, `App` runs each worker in its own thread with a separate event loop. This provides isolation between workers while keeping them in the same process. Workers won't block each other since each has its own async event loop.
+
+**For maximum isolation** (separate memory, crash protection), run each worker in its own process:
+
+```bash
+# Terminal 1
+ltq run myapp:emails_worker
+
+# Terminal 2
+ltq run myapp:notifications_worker
+```
+
+This gives you full process isolation at the cost of more overhead.
+
+## Queue Management
+
+Manage queues using the CLI:
+
+```bash
+# Clear a task queue
+ltq clear emails:send_email
+
+# Get queue size
+ltq size emails:send_email
+
+# With custom Redis URL
+ltq clear emails:send_email --redis-url redis://localhost:6380
+ltq size emails:send_email --redis-url redis://localhost:6380
+```
+
+Queue names are automatically namespaced as `{worker_name}:{function_name}`.
 
 ## Scheduler
 
@@ -86,38 +135,70 @@ import ltq
 
 scheduler = ltq.Scheduler()
 scheduler.cron("*/5 * * * *", send_email.message("admin@example.com", "Report", "..."))
-scheduler.run()
+scheduler.start()  # Runs scheduler in blocking mode with asyncio.run()
 ```
+
+## Task Options
+
+Configure task behavior with options:
+
+```python
+from datetime import timedelta
+
+@worker.task(max_tries=3, max_age=timedelta(hours=1), max_rate="10/s")
+async def send_email(to: str, subject: str, body: str) -> None:
+    # your async code here
+    pass
+```
+
+**Available options:**
+
+- `max_tries` (int): Maximum retry attempts before rejecting the message
+- `max_age` (timedelta): Maximum message age before rejection
+- `max_rate` (str): Rate limit in format `"N/s"`, `"N/m"`, or `"N/h"` (requests per second/minute/hour)
 
 ## Middleware
 
-Add middleware to handle cross-cutting concerns:
+Middleware are async context managers that wrap task execution. The default stack is `[MaxTries(), MaxAge(), MaxRate()]`, so you only need to specify middlewares if you want to customize or add additional ones:
 
 ```python
-from ltq.middleware import Retry, RateLimit, Timeout
+from ltq.middleware import MaxTries, MaxAge, MaxRate, Sentry
 
 worker = ltq.Worker(
-    url="redis://localhost:6379",
+    "emails",
+    broker_url="redis://localhost:6379",
     middlewares=[
-        Retry(max_retries=3, min_delay=1.0),
-        RateLimit(requests_per_second=10),
-        Timeout(timeout=30.0),
+        MaxTries(),
+        MaxAge(),
+        MaxRate(),
+        Sentry(dsn="https://..."),
     ],
 )
 ```
 
-**Built-in:** `Retry`, `RateLimit`, `Timeout`, `Sentry` (requires `ltq[sentry]`)
+**Built-in:** `MaxTries`, `MaxAge`, `MaxRate`, `Sentry` (requires `ltq[sentry]`)
+
+You can also register middleware after creating the worker:
+
+```python
+worker.register_middleware(Sentry(dsn="https://..."))
+
+# Insert at specific position (default is -1 for append)
+worker.register_middleware(MyMiddleware(), pos=0)
+```
 
 **Custom middleware:**
 
 ```python
-from ltq.middleware import Middleware, Handler
+from contextlib import asynccontextmanager
+from ltq.middleware import Middleware
 from ltq.message import Message
+from ltq.task import Task
 
 class Logger(Middleware):
-    async def handle(self, message: Message, next_handler: Handler):
-        print(f"Processing {message.task}")
-        result = await next_handler(message)
-        print(f"Completed {message.task}")
-        return result
+    @asynccontextmanager
+    async def __call__(self, message: Message, task: Task):
+        print(f"Processing {message.task_name}")
+        yield
+        print(f"Completed {message.task_name}")
 ```

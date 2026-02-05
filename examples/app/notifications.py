@@ -1,6 +1,6 @@
 import ltq
 
-worker = ltq.Worker("redis://localhost:6379")
+worker = ltq.Worker("notifications")
 
 
 @worker.task()

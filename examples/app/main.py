@@ -1,20 +1,21 @@
 import asyncio
 import ltq
 
-from app import emails, notifications
+from . import emails, notifications
 
 app = ltq.App()
 app.register_worker(emails.worker)
 app.register_worker(notifications.worker)
 
 
-if __name__ == "__main__":
-    messages = [
-        notifications.send_sms.message(
+async def main():
+    for i in range(1000, 2000):
+        await notifications.send_sms.send(
             phone=f"012345{i}",
             message="Important Message",
         )
-        for i in range(1000, 2000)
-    ]
-    asyncio.run(ltq.dispatch(messages))
     print("Messages dispatched")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
