@@ -96,6 +96,7 @@ class Scheduler:
         try:
             await self.task
         except asyncio.CancelledError:
+            # Task cancellation is expected during normal scheduler shutdown.
             pass
         self.task = None
         self.logger.info("Scheduler stopped")

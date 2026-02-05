@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from contextlib import AsyncExitStack
 from typing import Awaitable, Callable, ParamSpec, TypeVar
 
@@ -26,7 +27,7 @@ class Worker:
         self.name = name
         self.broker = Broker.from_url(broker_url)
         self.tasks: list[Task] = []
-        self.middlewares: list[Middleware] = middlewares or list(DEFAULT)
+        self.middlewares: list[Middleware] = middlewares or copy.deepcopy(DEFAULT)
         self.concurrency: int = concurrency
         self.logger = get_logger(name)
 
@@ -55,6 +56,7 @@ class Worker:
 
     async def _poll(self, task: Task, broker: Broker) -> None:
         sem = asyncio.Semaphore(self.concurrency)
+        pending: set[asyncio.Task] = set()
         self.logger.info(f"Polling for Task {task.name}")
 
         try:
@@ -62,9 +64,13 @@ class Worker:
                 message = await broker.consume(task.name)
                 # concurrency limiter, without, queue would be drained in one go.
                 await sem.acquire()
-                asyncio.create_task(self._process(task, broker, sem, message))
+                t = asyncio.create_task(self._process(task, broker, sem, message))
+                pending.add(t)
+                t.add_done_callback(pending.discard)
         except asyncio.CancelledError:
             self.logger.info(f"Worker {task.name} cancelled...")
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
             raise
 
     async def _process(

@@ -41,6 +41,14 @@ class RedisBroker(Broker):
         self.url = url
         self._client = aioredis.from_url(url)
         self._id = uuid.uuid4().hex[:8]
+        self._consume = self._client.register_script("""
+            local ready = redis.call('zrangebyscore', KEYS[1], 0, ARGV[1], 'LIMIT', 0, 1)
+            if #ready == 0 then return nil end
+            local msg = ready[1]
+            redis.call('zadd', KEYS[2], ARGV[1], msg)
+            redis.call('zrem', KEYS[1], msg)
+            return msg
+        """)
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -60,14 +68,11 @@ class RedisBroker(Broker):
 
     async def consume(self, queue: str) -> Message:
         while True:
-            now = time.time()
-            ready = await self._client.zrangebyscore(
-                f"queue:{queue}", 0, now, start=0, num=1
-            )  # type: ignore
-            if ready:
-                msg = ready[0]
-                await self._client.zadd(f"processing:{queue}:{self._id}", {msg: now,})  # type: ignore
-                await self._client.zrem(f"queue:{queue}", msg)  # type: ignore
+            msg = await self._consume(
+                keys=[f"queue:{queue}", f"processing:{queue}:{self._id}"],
+                args=[time.time()],
+            )
+            if msg:
                 return Message.from_json(msg)
             await asyncio.sleep(0.1)
 
