@@ -1,7 +1,14 @@
 #!/bin/bash
 set -e
 
+CURRENT_BRANCH=$(git branch --show-current)
 BUMP_TYPE="${1:-${BUMP_TYPE:-patch}}"
+
+
+if [[ "$CURRENT_BRANCH" != "main" ]]; then
+    echo "Error: Must be on main branch to release. Currently on: $CURRENT_BRANCH"
+    exit 1
+fi
 
 if [[ "$BUMP_TYPE" == "major" || "$BUMP_TYPE" == "minor" ]]; then
     echo -n "Release $BUMP_TYPE version? (Y/N): "
