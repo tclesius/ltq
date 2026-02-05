@@ -100,6 +100,7 @@ class Sentry(Middleware):
             sentry_sdk.init(dsn=dsn)
             self.sentry = sentry_sdk
         except ImportError:
+            # Sentry SDK is optional; if it's not installed, disable Sentry integration silently.
             pass
 
     @asynccontextmanager
