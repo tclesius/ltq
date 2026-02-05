@@ -1,5 +1,6 @@
 import logging
 import sys
+import threading
 
 
 class ColoredFormatter(logging.Formatter):
@@ -25,14 +26,18 @@ class ColoredFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         """Format log record with colored severity level."""
         color = self.COLORS.get(record.levelno, self.RESET)
-        log_time = self.formatTime(record, "%H:%M:%S")
-        timestamp = f"{self.GRAY}{log_time}{self.RESET}"
+        log_time = self.formatTime(record, "%Y-%m-%d %H:%M:%S")
+        log_time_ms = f"{log_time}.{int(record.msecs):03d}"
+        timestamp = f"{self.GRAY}{log_time_ms}{self.RESET}"
 
-        levelname = f"{color}{record.levelname:<8}{self.RESET}"
-        workername = f"{self.CYAN}{record.name:<8}{self.RESET}"
+        levelname = f"{color}{record.levelname:<4}{self.RESET}"
+
+        name = record.name.removeprefix("ltq.")
+        workername = f"{self.CYAN}{name:<6}{self.RESET}"
+        thread_id = f"{self.GRAY}[{threading.current_thread().ident}]{self.RESET}"
 
         message = record.getMessage()
-        log_line = f"{timestamp} {levelname} {workername} {message}"
+        log_line = f"{timestamp} {thread_id} {levelname} {workername} {message}"
 
         if record.exc_info and not record.exc_text:
             record.exc_text = self.formatException(record.exc_info)
@@ -60,4 +65,6 @@ def setup_logging(level: int | str = logging.INFO) -> None:
 
 
 def get_logger(name: str = "ltq") -> logging.Logger:
-    return logging.getLogger(name)
+    if name == "ltq":
+        return logging.getLogger("ltq")
+    return logging.getLogger(f"ltq.{name}")

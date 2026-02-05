@@ -1,117 +1,115 @@
 from __future__ import annotations
 
-import asyncio
+from datetime import timedelta
+from functools import lru_cache
+import random
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Awaitable, Callable
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, AsyncIterator
 
-from .errors import RetryMessage
-from .message import Message
-from .logger import get_logger
+from .errors import RejectError, RetryError
 
-logger = get_logger()
-Handler = Callable[[Message], Awaitable[Any]]
+if TYPE_CHECKING:
+    from .message import Message
+    from .task import Task
 
 
 class Middleware(ABC):
     @abstractmethod
-    async def handle(self, message: Message, next_handler: Handler) -> Any: ...
+    @asynccontextmanager
+    async def __call__(self, message: Message, task: Task) -> AsyncIterator[None]:
+        yield
 
 
-class Retry(Middleware):
-    def __init__(
-        self,
-        max_retries: int = 3,
-        min_delay: float = 1.0,
-        max_delay: float = 60.0,
-        backoff: float = 2.0,
-    ):
-        self.max_retries = max_retries
-        self.min_delay = min_delay
-        self.max_delay = max_delay
-        self.backoff = backoff
-
-    async def handle(self, message: Message, next_handler: Handler) -> Any:
-        retries = message.ctx.get("retries", 0)
+class MaxTries(Middleware):
+    @asynccontextmanager
+    async def __call__(self, message: Message, task: Task) -> AsyncIterator[None]:
+        max_tries = task.options.get("max_tries")
+        if max_tries is not None:
+            if message.ctx.get("tries", 0) >= max_tries:
+                raise RejectError(f"Message {message.id} exceeded max tries")
 
         try:
-            return await next_handler(message)
-        except Exception as e:
-            retries += 1
-            message.ctx["retries"] = retries
-            max_retries = max(self.max_retries - 1, 0)
-
-            if retries > max_retries:
-                raise
-
-            delay = min(
-                self.min_delay * (self.backoff ** (retries - 1)),
-                self.max_delay,
-            )
-            logger.warning(
-                f"Retry attempt {retries}/{max_retries} ({type(e).__name__})",
-                exc_info=True,
-            )
-            raise RetryMessage(delay, str(e))
+            yield
+        except Exception:
+            if not message.ctx.pop("rate_limited", False):
+                message.ctx["tries"] = message.ctx.get("tries", 0) + 1
+            raise
 
 
-class RateLimit(Middleware):
-    def __init__(self, requests_per_second: float):
-        self.min_interval = 1.0 / requests_per_second
-        self._last_request: float = 0
-        self._lock = asyncio.Lock()
+class MaxAge(Middleware):
+    @asynccontextmanager
+    async def __call__(self, message: Message, task: Task) -> AsyncIterator[None]:
+        max_age: timedelta | None = task.options.get("max_age")
+        created_at = message.ctx.get("created_at")
 
-    async def handle(self, message: Message, next_handler: Handler) -> Any:
-        async with self._lock:
-            now = time.monotonic()
-            elapsed = now - self._last_request
-            if elapsed < self.min_interval:
-                await asyncio.sleep(self.min_interval - elapsed)
-            self._last_request = time.monotonic()
+        if max_age is not None and created_at is not None:
+            age = time.time() - float(created_at)
+            if age > max_age.total_seconds():
+                raise RejectError(f"Message {message.id} too old")
 
-        return await next_handler(message)
+        yield
 
 
-class Timeout(Middleware):
-    def __init__(self, timeout: float):
-        self.timeout = timeout
+class MaxRate(Middleware):
+    def __init__(self) -> None:
+        self.last_times: dict[str, float] = {}
 
-    async def handle(self, message: Message, next_handler: Handler) -> Any:
-        return await asyncio.wait_for(next_handler(message), timeout=self.timeout)
+    @lru_cache(maxsize=128)
+    def _parse_rate(self, rate: str) -> float:
+        count, unit = rate.split("/")
+        count = float(count)
+        unit = unit.strip().lower()
+
+        if unit == "s":
+            return count
+        elif unit == "m":
+            return count / 60
+        elif unit == "h":
+            return count / 3600
+        else:
+            raise ValueError(f"Invalid rate unit: {unit}. Use 's', 'm', or 'h'")
+
+    @asynccontextmanager
+    async def __call__(self, message: Message, task: Task) -> AsyncIterator[None]:
+        max_rate = task.options.get("max_rate")
+        if max_rate:
+            now = time.time()
+            last = self.last_times.get(message.task_name, 0.0)
+            elapsed = now - last
+            rate_per_sec = self._parse_rate(max_rate)
+            interval = 1.0 / rate_per_sec
+
+            if elapsed < interval:
+                base_delay = interval - elapsed
+                delay = base_delay * 0.5 + random.uniform(0, base_delay * 0.5)
+                message.ctx["rate_limited"] = True
+                raise RetryError(delay=delay)
+
+            self.last_times[message.task_name] = now
+        yield
 
 
 class Sentry(Middleware):
-    def __init__(self, dsn: str, **kwargs: Any) -> None:
+    def __init__(self, dsn: str) -> None:
+        self.sentry = None
         try:
-            import sentry_sdk  # type: ignore[import-not-found]
-        except ModuleNotFoundError as exc:
-            raise ModuleNotFoundError(
-                "Sentry middleware requires optional dependency 'sentry-sdk'. "
-                "Install with 'ltq[sentry]'."
-            ) from exc
+            import sentry_sdk  # type: ignore
 
-        self.sentry = sentry_sdk
-        self.sentry.init(dsn=dsn, send_default_pii=True, **kwargs)
+            sentry_sdk.init(dsn=dsn)
+            self.sentry = sentry_sdk
+        except ImportError:
+            pass
 
-    async def handle(self, message: Message, next_handler: Handler) -> Any:
-        with self.sentry.push_scope() as scope:
-            scope.set_tag("task", message.task_name)
-            scope.set_tag("message_id", message.id)
-            scope.set_context(
-                "message",
-                {
-                    "id": message.id,
-                    "task": message.task_name,
-                    "args": message.args,
-                    "kwargs": message.kwargs,
-                    "ctx": message.ctx,
-                },
-            )
-
-            try:
-                return await next_handler(message)
-            except RetryMessage:
-                raise
-            except Exception as e:
+    @asynccontextmanager
+    async def __call__(self, message: Message, task: Task) -> AsyncIterator[None]:
+        try:
+            yield
+        except Exception as e:
+            if self.sentry:
                 self.sentry.capture_exception(e)
-                raise
+            raise
+
+
+DEFAULT: list[Middleware] = [MaxTries(), MaxAge(), MaxRate()]

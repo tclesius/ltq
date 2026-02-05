@@ -8,6 +8,7 @@ import argparse
 
 from .logger import setup_logging, get_logger
 from .app import App
+from .broker import Broker
 from .worker import Worker
 
 logger = get_logger()
@@ -37,74 +38,142 @@ def import_from_string(import_str: str):
         sys.exit(1)
 
 
+async def clear_queue(
+    task_name: str,
+    url: str = "redis://localhost:6379",
+) -> None:
+    """Clear a queue for a specific task."""
+    broker = Broker.from_url(url)
+    try:
+        await broker.clear(task_name)
+        logger.info(f"Cleared queue for task: {task_name}")
+    finally:
+        await broker.close()
+
+
+async def get_queue_size(
+    task_name: str,
+    url: str = "redis://localhost:6379",
+) -> int:
+    """Get the size of a queue for a specific task."""
+    broker = Broker.from_url(url)
+    try:
+        return await broker.len(task_name)
+    finally:
+        await broker.close()
+
+
 def main():
     """Run a ltq worker."""
 
     parser = argparse.ArgumentParser(
         prog="ltq",
-        description="Run a ltq worker",
+        description="Run a ltq worker or manage queues",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Example:\n  ltq example:worker --concurrency 100",
+        epilog="Examples:\n  ltq run examples:worker --concurrency 100\n  ltq clear emails:send_email",
     )
 
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command", help="Command to run")
+
+    # Run command
+    run_parser = subparsers.add_parser("run", help="Run a worker or app")
+    run_parser.add_argument(
         "worker", nargs="?", help="Worker import string (module:attribute)"
     )
-    parser.add_argument(
+    run_parser.add_argument(
         "--app", dest="app", help="App import string (module:attribute)"
     )
-    parser.add_argument("--concurrency", type=int, help="Override worker concurrency")
-    parser.add_argument("--poll-sleep", type=float, help="Override worker poll sleep")
-    parser.add_argument(
+    run_parser.add_argument(
+        "--concurrency", type=int, help="Override worker concurrency"
+    )
+    run_parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Set logging level (default: INFO)",
     )
+
+    # Clear command
+    clear_parser = subparsers.add_parser("clear", help="Clear a task queue")
+    clear_parser.add_argument("task_name", help="Task name (namespace:function)")
+    clear_parser.add_argument(
+        "--redis-url",
+        default="redis://localhost:6379",
+        help="Redis URL (default: redis://localhost:6379)",
+    )
+    clear_parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set logging level (default: INFO)",
+    )
+
+    # Size command
+    size_parser = subparsers.add_parser("size", help="Get queue size for a task")
+    size_parser.add_argument("task_name", help="Task name (namespace:function)")
+    size_parser.add_argument(
+        "--redis-url",
+        default="redis://localhost:6379",
+        help="Redis URL (default: redis://localhost:6379)",
+    )
+
     args = parser.parse_args()
 
-    if not args.worker and not args.app:
-        parser.error("either worker or --app is required")
-    if args.worker and args.app:
-        parser.error("cannot specify both worker and --app")
-
     # Setup colored logging for CLI
-    setup_logging(level=args.log_level)
-    if args.log_level:
+    setup_logging(level=getattr(args, "log_level", "INFO"))
+    if hasattr(args, "log_level") and args.log_level:
         logger.setLevel(args.log_level)
 
-    if args.app:
-        app: App = import_from_string(args.app)
+    # Handle clear command
+    if args.command == "clear":
+        asyncio.run(clear_queue(args.task_name, args.redis_url))
+        return
 
-        for w in app.workers:
+    # Handle size command
+    if args.command == "size":
+        size = asyncio.run(get_queue_size(args.task_name, args.redis_url))
+        print(f"{args.task_name}: {size}")
+        return
+
+    # Handle run command
+    if args.command == "run":
+        if not args.worker and not args.app:
+            run_parser.error("either worker or --app is required")
+        if args.worker and args.app:
+            run_parser.error("cannot specify both worker and --app")
+
+        if args.app:
+            app: App = import_from_string(args.app)
+
+            for w in app.workers.values():
+                if args.concurrency:
+                    w.concurrency = args.concurrency
+
+            logger.info("Starting ltq app")
+
+            try:
+                asyncio.run(app.run())
+            except KeyboardInterrupt:
+                logger.info("Shutting down...")
+        else:
+            worker: Worker = import_from_string(args.worker)
+
             if args.concurrency:
-                w.concurrency = args.concurrency
-            if args.poll_sleep:
-                w.poll_sleep = args.poll_sleep
+                worker.concurrency = args.concurrency
 
-        logger.info("Starting ltq app")
-        logger.info("App: %s (%d workers)", args.app, len(app.workers))
+            logger.info("Starting ltq worker")
 
-        try:
-            asyncio.run(app.run())
-        except KeyboardInterrupt:
-            logger.info("Shutting down...")
-    else:
-        worker: Worker = import_from_string(args.worker)
+            try:
+                asyncio.run(worker.run())
+            except KeyboardInterrupt:
+                logger.info("Shutting down...")
+        return
 
-        if args.concurrency:
-            worker.concurrency = args.concurrency
-        if args.poll_sleep:
-            worker.poll_sleep = args.poll_sleep
-
-        logger.info("Starting ltq worker")
-        logger.info("Worker: %s", args.worker)
-
-        try:
-            asyncio.run(worker.run())
-        except KeyboardInterrupt:
-            logger.info("Shutting down...")
+    # No command specified
+    parser.print_help()
+    sys.exit(1)
 
 
 if __name__ == "__main__":
