@@ -37,4 +37,5 @@ class App:
             while any(t.is_alive() for t in threads):
                 await asyncio.sleep(0.2)
         except asyncio.CancelledError:
+            # Allow graceful shutdown when the run coroutine is cancelled.
             pass
